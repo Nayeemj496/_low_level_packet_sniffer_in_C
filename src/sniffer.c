@@ -33,11 +33,11 @@ int main(int argc, char **argv)
         if(strncmp(argv[i], "--", 2) == 0)
         {
             if(!_flag_present(argv[i]))
-                {
-                    fprintf(stdout, "[-] \"%s\" not a valid flag!\n", argv[i]);
-                    fprintf(stdout, "[-] Try: [--list-interfaces] [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--hex]]\n");
-                    return 2;
-                }
+            {
+                fprintf(stdout, "[-] \"%s\" not a valid flag!\n", argv[i]);
+                fprintf(stdout, "[-] Try: [--list-interfaces] [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--hex]]\n");
+                return 2;
+            }
         }
     }
 
@@ -62,18 +62,30 @@ int main(int argc, char **argv)
     }
     else
     {
-        // int promiscuous_flag_index = _arg_present("--promiscuous");
-        // int filter_flag_index = _arg_present("--filter");
-        // int hex_flag_index = _arg_present("--hex");
+        int promiscuous_flag_index = _arg_present("--promiscuous");
+        int filter_flag_index = _arg_present("--filter");
+        int hex_flag_index = _arg_present("--hex");
 
         int flag = _check_interface_available(argv[interface_flag_index + 1]);
 
-        if(flag == ADMIN_UP)
-            fprintf(stdout, "ADMIN UP\n");
-        else if(flag == ADMIN_DOWN)
-            fprintf(stdout, "ADMIN_DOWN\n");
+        if(flag == ADMIN_DOWN)
+        {
+            fprintf(stdout, "[-] %s is administratively down\n", argv[interface_flag_index + 1]);
+            return 7;
+        }
+        else if(flag == IF_NONEXISTENT)
+        {
+            fprintf(stdout, "[-] %s interface has not been found\n", argv[interface_flag_index + 1]);
+            return 8;
+        }
         else
-            fprintf(stdout, "IF_NONEXISTENT\n");
+        {
+            bool is_promiscuous = (promiscuous_flag_index > 0) ? 1 : 0;
+            bool hex = (hex_flag_index > 0) ? 1 : 0;
+            char *const filter = (filter_flag_index > 0) ? argv[filter_flag_index + 1] : NULL;
+
+            _packet_socket_enable(filter, is_promiscuous, hex);
+        }
     }
 
     return 0;

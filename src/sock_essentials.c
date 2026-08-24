@@ -158,3 +158,8 @@ bool _is_ready_to_listen(unsigned int flag)
         return false;
     }
 }
+
+void _packet_socket_enable(char * const filter, bool is_promiscuous, bool hex)
+{
+    fprintf(stdout, "filter: %s, is_promiscuous: %d, hex: %d\n", filter, is_promiscuous, hex);
+}

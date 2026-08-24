@@ -22,3 +22,5 @@ $(OBJDIR)/%.o: $(SRC)/%.c
 
 clean:
 	rm -f $(OBJDIR)/*.o $(TARGET)
+
+rebuild: clean all

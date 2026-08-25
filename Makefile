@@ -1,5 +1,6 @@
 CC=gcc
 CFLAGS=-Wall -g
+LIBS=-lpcap
 INCLUDE=$(CURDIR)/include
 SRC=$(CURDIR)/src
 LIB=$(CURDIR)/lib
@@ -15,7 +16,7 @@ TARGET=sniffer
 all: $(TARGET)
 
 $(TARGET): $(OBJFILES)
-		$(CC) $(CFLAGS) $^ -o $@
+		$(CC) $(CFLAGS) $^ -o $@ $(LIBS)
 
 $(OBJDIR)/%.o: $(SRC)/%.c
 	$(CC) $(CFLAGS) -I$(INCLUDE) -c $< -o $@

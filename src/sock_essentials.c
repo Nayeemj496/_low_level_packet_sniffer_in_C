@@ -10,8 +10,10 @@
 #include <net/if.h>             // struct ifreq
 #include <arpa/inet.h>          // htons()
 #include <ifaddrs.h>            // struct ifaddrs
+#include <linux/filter.h>       // struct sock_fprog
 #include <linux/if_ether.h>     // ETH_P_ALL
 #include <linux/if_packet.h>    // struct sockaddr_ll
+#include <pcap/pcap.h>
 #include <sock_essentials.h>
 
 char **ARGV = NULL;
@@ -194,7 +196,7 @@ int _change_promiscuous_mode(char * const ifname, bool mode)
     // Fetch current interface flags
     if(ioctl(raw_sock, SIOCGIFFLAGS, &ethreq) == -1)
     {
-        perror("[-] Error getting interface flags");
+        perror("[-] ioctl");
         close(raw_sock);
         return -1;
     }
@@ -210,7 +212,7 @@ int _change_promiscuous_mode(char * const ifname, bool mode)
 
     // modify current interface flags
     if (ioctl(raw_sock, SIOCSIFFLAGS, &ethreq) == -1) {
-        perror("[-] Error setting promiscuous mode");
+        perror("[-] ioctl");
         close(raw_sock);
         return -1;
     }
@@ -229,7 +231,51 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
         return SOCK_FAILED;
     }
 
-    fprintf(stdout, "fd: %d\n", raw_sock); // debugging purpose
+    if(filter != NULL && strlen(filter))
+    {
+        struct bpf_program fp;
+        pcap_t *dead_handle = pcap_open_dead(DLT_EN10MB, MAXIMUM_SNAPLEN);
+        if(!dead_handle)
+        {
+            fprintf(stderr, "[-] Failed to initialize dead pcap handle\n");
+            return 1;
+        }
+
+        if(pcap_compile(dead_handle, &fp, filter, 1, PCAP_NETMASK_UNKNOWN) == PCAP_ERROR)
+        {
+            fprintf(stderr, "[-] Filter compilation error: %s\n", pcap_geterr(dead_handle));
+            pcap_close(dead_handle);
+            return 1;
+        }
+
+        struct sock_fprog linux_filter = {
+            .len = (unsigned short)fp.bf_len,
+            .filter = (struct sock_filter *)fp.bf_insns
+        };
+
+        if (setsockopt(raw_sock, SOL_SOCKET, SO_ATTACH_FILTER, &linux_filter, sizeof(linux_filter)) == -1) {
+            perror("[-] setsockopt");
+            close(raw_sock);
+            pcap_freecode(&fp);
+            pcap_close(dead_handle);
+            return 1;
+        }
+
+        // debugging purpose
+        for (int i = 0; i < linux_filter.len; ++i) {
+            printf("[%02d] 0x%04x 0x%02x 0x%02x 0x%08x\n",
+                i,
+                linux_filter.filter[i].code,
+                linux_filter.filter[i].jt,
+                linux_filter.filter[i].jf,
+                linux_filter.filter[i].k);
+        }
+
+        pcap_freecode(&fp);
+        pcap_close(dead_handle);
+
+        fprintf(stdout, "[+] Successfully compiled and attached filter: \"%s\"\n", filter);
+    }
 
     if(flag != ALL_IF)
     {
@@ -261,7 +307,10 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
     {
         // enable promiscuous mode
         if(_change_promiscuous_mode(ifname, true) < 0)
+        {
+            close(raw_sock);
             return -1;
+        }
     }
     
     printf("[+] Sniffer started on interface %s", ifname);
@@ -272,8 +321,6 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
         fprintf(stdout, "\n");
 
     printf("[+] Waiting for packets... (Press Ctrl+C to stop)\n");
-
-    
 
     while(true)
     {

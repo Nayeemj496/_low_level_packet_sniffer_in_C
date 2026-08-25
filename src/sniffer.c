@@ -11,8 +11,8 @@ int main(int argc, char **argv)
 
     if(argc < 2)
     {
-        fprintf(stdout, "[-] Too few arguments!\n");
-        fprintf(stdout, "[-] Usage: sniff [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--hex]] [--list-interfaces]\n");
+        fprintf(stderr, "[-] Too few arguments!\n");
+        fprintf(stderr, "[-] Usage: sniff [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--hex]] [--list-interfaces]\n");
         return 1;
     }
     
@@ -22,8 +22,8 @@ int main(int argc, char **argv)
         {
             if(!_flag_present(argv[i]))
             {
-                fprintf(stdout, "[-] \"%s\" not a valid flag!\n", argv[i]);
-                fprintf(stdout, "[-] Try: [--list-interfaces] [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--hex]]\n");
+                fprintf(stderr, "[-] \"%s\" not a valid flag!\n", argv[i]);
+                fprintf(stderr, "[-] Try: [--list-interfaces] [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--hex]]\n");
                 return 2;
             }
         }
@@ -36,7 +36,7 @@ int main(int argc, char **argv)
 
     if(list_interfaces_flag_index > 0 && argc > 2)
     {
-        fprintf(stdout, "[-] Usage: sniff --list-interfaces\n");
+        fprintf(stderr, "[-] Usage: sniff --list-interfaces\n");
         return 3;
     }
     else if(list_interfaces_flag_index > 0 && argc == 2)
@@ -45,7 +45,7 @@ int main(int argc, char **argv)
     }
     else if(interface_flag_index < 0)
     {
-        fprintf(stdout, "[-] Usage: sniff --interface <INTERFACE> [--filter <FILTER>] [--promiscuous] [--hex]\n");
+        fprintf(stderr, "[-] Usage: sniff --interface <INTERFACE> [--filter <FILTER>] [--promiscuous] [--hex]\n");
         return 6;
     }
     else
@@ -58,12 +58,12 @@ int main(int argc, char **argv)
 
         if(flag == IF_NONEXISTENT)
         {
-            fprintf(stdout, "[-] \"%s\" is administratively down\n", argv[interface_flag_index + 1]);
+            fprintf(stderr, "[-] \"%s\" is administratively down\n", argv[interface_flag_index + 1]);
             return 7;
         }
         else if(flag == ADMIN_DOWN)
         {
-            fprintf(stdout, "[-] \"%s\" interface has not been found\n", argv[interface_flag_index + 1]);
+            fprintf(stderr, "[-] \"%s\" interface has not been found\n", argv[interface_flag_index + 1]);
             return 8;
         }
         else

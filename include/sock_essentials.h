@@ -5,12 +5,13 @@
 #include <stdbool.h>
 #include <signal.h>
 
-#define N_FLAG          5
-#define ADMIN_UP        0
-#define ADMIN_DOWN      1
-#define IF_NONEXISTENT  2
-#define ALL_IF          3
-#define SOCK_FAILED     4
+#define N_FLAG              5
+#define ADMIN_UP            0
+#define ADMIN_DOWN          1
+#define IF_NONEXISTENT      2
+#define ALL_IF              3
+#define SOCK_FAILED         4
+#define MAXIMUM_SNAPLEN     262144
 
 extern char *flags[];
 extern char **ARGV;

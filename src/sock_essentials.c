@@ -225,22 +225,37 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
     raw_sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
     if(raw_sock < 0)
     {
-        perror("socket created failed. Are you running with sudo?");
+        perror("socket creation failed. Are you running with sudo?");
         return SOCK_FAILED;
     }
 
-    if(flag == ALL_IF)
-    {
-        // packet socket will run on all interfaces
-        
-    }
-    else
-    {
-        
-        // packet socket will run on "ifname" interface
-    }
-    
     fprintf(stdout, "fd: %d\n", raw_sock); // debugging purpose
+
+    if(flag != ALL_IF)
+    {
+        // packet will run on "ifname" interface
+        unsigned int ifindex = if_nametoindex(ifname);
+        if (ifindex == 0) {
+            perror("[-] Failed to find interface index");
+            close(raw_sock);
+            return 1;
+        }
+
+        struct sockaddr_ll sll;
+        memset(&sll, 0, sizeof(sll));
+        sll.sll_family   = AF_PACKET;
+        sll.sll_protocol = htons(ETH_P_ALL); // Capture all protocols on this interface
+        sll.sll_ifindex  = ifindex;          // Bind strictly to this interface index
+
+        // Bind the socket
+        if (bind(raw_sock, (struct sockaddr *)&sll, sizeof(sll)) == -1) {
+            perror("[-] Failed to bind socket to interface");
+            close(raw_sock);
+            return 1;
+        }
+
+        printf("[+] Socket successfully bound to interface %s (index: %u)\n", ifname, ifindex);
+    }
 
     if(is_promiscuous)
     {
@@ -258,6 +273,8 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
 
     printf("[+] Waiting for packets... (Press Ctrl+C to stop)\n");
 
+    
+
     while(true)
     {
         fprintf(stdout, "hello world\n");
@@ -270,4 +287,6 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
     }
 
     close(raw_sock);
+
+    return 0;
 }

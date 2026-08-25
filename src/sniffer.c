@@ -1,21 +1,9 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
-#include <stdlib.h>
-#include <signal.h>
+#include <stdlib.h> 
 #include <sock_essentials.h>
 
-void handle_sigint(int sig)
-{
-    printf("\n[!] Ctrl+C detected. Cleaning up and exiting...\n");
-
-    if(raw_sock >= 0)
-    {
-        close(raw_sock);
-    }
-
-    exit(0);
-}
 
 int main(int argc, char **argv)
 {
@@ -68,23 +56,24 @@ int main(int argc, char **argv)
 
         int flag = _check_interface_available(argv[interface_flag_index + 1]);
 
-        if(flag == ADMIN_DOWN)
+        if(flag == IF_NONEXISTENT)
         {
-            fprintf(stdout, "[-] %s is administratively down\n", argv[interface_flag_index + 1]);
+            fprintf(stdout, "[-] \"%s\" is administratively down\n", argv[interface_flag_index + 1]);
             return 7;
         }
-        else if(flag == IF_NONEXISTENT)
+        else if(flag == ADMIN_DOWN)
         {
-            fprintf(stdout, "[-] %s interface has not been found\n", argv[interface_flag_index + 1]);
+            fprintf(stdout, "[-] \"%s\" interface has not been found\n", argv[interface_flag_index + 1]);
             return 8;
         }
         else
         {
-            bool is_promiscuous = (promiscuous_flag_index > 0) ? 1 : 0;
-            bool hex = (hex_flag_index > 0) ? 1 : 0;
+            ifname = argv[interface_flag_index + 1];
+            is_promiscuous = (promiscuous_flag_index > 0) ? true : false;
+            bool hex = (hex_flag_index > 0) ? true : false;
             char *const filter = (filter_flag_index > 0) ? argv[filter_flag_index + 1] : NULL;
 
-            _packet_socket_enable(filter, is_promiscuous, hex);
+            _packet_socket_enable(ifname, filter, is_promiscuous, hex, flag);
         }
     }
 

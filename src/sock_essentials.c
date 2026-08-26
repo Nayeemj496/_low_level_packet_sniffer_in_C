@@ -8,6 +8,9 @@
 #include <sys/socket.h>         // socket(); struct sockaddr
 #include <sys/ioctl.h>          // ioctl()
 #include <net/if.h>             // struct ifreq
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
 #include <arpa/inet.h>          // htons()
 #include <ifaddrs.h>            // struct ifaddrs
 #include <linux/filter.h>       // struct sock_fprog
@@ -23,7 +26,7 @@ int raw_sock = -1;
 bool is_promiscuous;
 
 char *flags[] = {
-    "--list-interfaces", "--interface", "--promiscuous", "--filter", "--hex"
+    "--list-interfaces", "--interface", "--promiscuous", "--filter", "--x", "--ascii"
 };
 
 int _change_promiscuous_mode(char * const ifname, bool mode);
@@ -220,7 +223,90 @@ int _change_promiscuous_mode(char * const ifname, bool mode)
     return 0;
 }
 
-int _packet_socket_enable(char * const ifname, char * const filter, bool is_promiscuous, bool hex, int flag)
+void print_packet_details(unsigned char * const buffer, ssize_t length, bool hex, bool ascii)
+{
+    if(length < (ssize_t)sizeof(struct ethhdr))
+        return;
+    
+    struct ethhdr *eth = (struct ethhdr *)buffer;
+    printf("\n=== [Frame: %zd bytes] ===\n", length);
+    printf("Ethernet: %02x:%02x:%02x:%02x:%02x:%02x -> %02x:%02x:%02x:%02x:%02x:%02x | Proto: 0x%04x\n",
+           eth->h_source[0], eth->h_source[1], eth->h_source[2],
+           eth->h_source[3], eth->h_source[4], eth->h_source[5],
+           eth->h_dest[0], eth->h_dest[1], eth->h_dest[2],
+           eth->h_dest[3], eth->h_dest[4], eth->h_dest[5],
+           ntohs(eth->h_proto));
+
+    if(ntohs(eth->h_proto) == ETH_P_IP)
+    {
+        if(length < (ssize_t)(sizeof(struct ethhdr) + sizeof(struct iphdr)))
+            return;
+
+        struct iphdr *ip = (struct iphdr *)(buffer + sizeof(struct ethhdr));
+        struct in_addr src, dst;
+
+        src.s_addr = ip->saddr;
+        dst.s_addr = ip->daddr;
+
+        int ip_header_len = ip->ihl * 4;
+        printf("IPv4: %s -> %s | Protocol: %u | TTL: %u\n",
+               inet_ntoa(src), inet_ntoa(dst), ip->protocol, ip->ttl);
+        
+        unsigned char * const l3_payload = buffer + sizeof(struct ethhdr) + sizeof(ip_header_len);
+
+        if(ip->protocol == IPPROTO_TCP)
+        {
+            struct tcphdr *tcp = (struct tcphdr *)l3_payload;
+            printf("Layer 4 [TCP]: Port %u -> %u | Seq: %u\n",
+                   ntohs(tcp->source), ntohs(tcp->dest), ntohl(tcp->seq));
+        }
+        else if(ip->protocol == IPPROTO_UDP)
+        {
+            struct udphdr *udp = (struct udphdr *)l3_payload;
+            printf("Layer 4 [UDP]: Port %u -> %u | Length: %u\n",
+                   ntohs(udp->source), ntohs(udp->dest), ntohs(udp->len));
+        }
+    }
+
+    if(hex)
+    {
+        for(int i = 0; i < (int)ceil(length / 16.0); ++i)
+        {
+            printf("%05x: ", (i * 16));
+            for(int j = 0; j < 8; ++j)
+            {
+                if(i * 16 + 2 * j < length)
+                    printf("%02x", buffer[i * 16 + 2 * j]);
+                else
+                    printf("  ");
+                if(i * 16 + 2 * j + 1 < length)
+                    printf("%02x ", buffer[i * 16 + 2 * j + 1]);
+                else
+                    printf("   ");
+            }
+
+            if(ascii)
+            {
+                printf("  ");
+
+                for(int j = 0; j < 16; ++j)
+                {
+                    if(i * 16 + j < length)
+                    {
+                        if(buffer[i * 16 + j] > 0x1F && buffer[i * 16 + j] < 0x7F)
+                            printf("%c", buffer[i * 16 + j]);
+                        else
+                            printf(".");
+                    }
+                }
+            }
+
+            printf("\n");
+        }
+    }
+}
+
+int _packet_socket_enable(char * const ifname, char * const filter, bool is_promiscuous, bool hex, bool ascii, int flag)
 {
     fprintf(stdout, "ifname: %s, filter: %s, is_promiscuous: %d, hex: %d, flag: %d\n", ifname, filter, is_promiscuous, hex, flag);
 
@@ -307,10 +393,7 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
     {
         // enable promiscuous mode
         if(_change_promiscuous_mode(ifname, true) < 0)
-        {
-            close(raw_sock);
             return -1;
-        }
     }
     
     printf("[+] Sniffer started on interface %s", ifname);
@@ -322,15 +405,25 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
 
     printf("[+] Waiting for packets... (Press Ctrl+C to stop)\n");
 
+    unsigned char buffer[BUFFER_SIZE];
+    struct sockaddr_ll from;
+    socklen_t from_len = sizeof(from);
+
     while(true)
     {
-        fprintf(stdout, "hello world\n");
-        sleep(2);
+        ssize_t num_bytes = recvfrom(raw_sock, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&from, &from_len);
+        if(num_bytes < 0)
+        {
+            perror("[-] recvfrom");
+            break;
+        }
+        print_packet_details(buffer, num_bytes, hex, ascii);
     }
 
     if(is_promiscuous)
     {
-        _change_promiscuous_mode(ifname, false);
+        if(_change_promiscuous_mode(ifname, false) < 0)
+            return -1;
     }
 
     close(raw_sock);

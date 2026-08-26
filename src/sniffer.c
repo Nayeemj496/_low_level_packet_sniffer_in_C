@@ -12,7 +12,7 @@ int main(int argc, char **argv)
     if(argc < 2)
     {
         fprintf(stderr, "[-] Too few arguments!\n");
-        fprintf(stderr, "[-] Usage: sniff [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--hex]] [--list-interfaces]\n");
+        fprintf(stderr, "[-] Usage: sniff [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--x [--ascii]]] [--list-interfaces]\n");
         return 1;
     }
     
@@ -23,7 +23,7 @@ int main(int argc, char **argv)
             if(!_flag_present(argv[i]))
             {
                 fprintf(stderr, "[-] \"%s\" not a valid flag!\n", argv[i]);
-                fprintf(stderr, "[-] Try: [--list-interfaces] [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--hex]]\n");
+                fprintf(stderr, "[-] Try: [--list-interfaces] [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--x [--ascii]]]\n");
                 return 2;
             }
         }
@@ -45,14 +45,15 @@ int main(int argc, char **argv)
     }
     else if(interface_flag_index < 0)
     {
-        fprintf(stderr, "[-] Usage: sniff --interface <INTERFACE> [--filter <FILTER>] [--promiscuous] [--hex]\n");
+        fprintf(stderr, "[-] Usage: sniff --interface <INTERFACE> [--filter <FILTER>] [--promiscuous] [--x [--ascii]]\n");
         return 6;
     }
     else
     {
         int promiscuous_flag_index = _arg_present("--promiscuous");
         int filter_flag_index = _arg_present("--filter");
-        int hex_flag_index = _arg_present("--hex");
+        int hex_flag_index = _arg_present("--x");
+        int ascii_flag_index = _arg_present("--ascii");
 
         int flag = _check_interface_available(argv[interface_flag_index + 1]);
 
@@ -71,9 +72,10 @@ int main(int argc, char **argv)
             ifname = argv[interface_flag_index + 1];
             is_promiscuous = (promiscuous_flag_index > 0) ? true : false;
             bool hex = (hex_flag_index > 0) ? true : false;
+            bool ascii = (ascii_flag_index > 0) && hex ? true : false;
             char *const filter = (filter_flag_index > 0) ? argv[filter_flag_index + 1] : NULL;
 
-            _packet_socket_enable(ifname, filter, is_promiscuous, hex, flag);
+            _packet_socket_enable(ifname, filter, is_promiscuous, hex, ascii, flag);
         }
     }
 

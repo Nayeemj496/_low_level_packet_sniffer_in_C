@@ -1,0 +1,24 @@
+services:
+    ubuntu:
+        image: ubuntu:1.0.0
+        container_name: ubuntu_
+        command: tail -f /dev/null
+        cap_add:
+            - SYS_ADMIN
+            - NET_ADMIN
+        networks:
+            - docker_net
+    ubuntu_another:
+        image: ubuntu:1.0.0
+        container_name: ubuntu_another_
+        command: tail -f /dev/null
+        cap_add:
+            - SYS_ADMIN
+            - NET_ADMIN
+        networks:
+            - docker_net
+
+networks:
+    docker_net:
+        driver: bridge
+        name: docker_net_

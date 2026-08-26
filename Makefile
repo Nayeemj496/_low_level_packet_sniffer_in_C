@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-Wall -g
-LIBS=-lpcap
+LIBS=-lpcap -lm
 INCLUDE=$(CURDIR)/include
 SRC=$(CURDIR)/src
 LIB=$(CURDIR)/lib

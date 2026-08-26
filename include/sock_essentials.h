@@ -5,12 +5,13 @@
 #include <stdbool.h>
 #include <signal.h>
 
-#define N_FLAG              5
+#define N_FLAG              6
 #define ADMIN_UP            0
 #define ADMIN_DOWN          1
 #define IF_NONEXISTENT      2
 #define ALL_IF              3
 #define SOCK_FAILED         4
+#define BUFFER_SIZE         65536
 #define MAXIMUM_SNAPLEN     262144
 
 extern char *flags[];
@@ -25,6 +26,6 @@ bool _flag_present(char * const);
 int _arg_present(char * const);
 int _list_interfaces(void);
 int _check_interface_available(char * const);
-int _packet_socket_enable(char * const, char * const, bool, bool, int);
+int _packet_socket_enable(char * const, char * const, bool, bool, bool, int);
 
 #endif

@@ -9,5 +9,7 @@ RUN apt-get update -y && \
     dnsutils \
     iptables \
     tcpdump \
+    curl \
+    netcat-openbsd \
     tmux && \
     rm -rf /var/lib/apt/lists/*

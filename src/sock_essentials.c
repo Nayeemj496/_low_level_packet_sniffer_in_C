@@ -26,7 +26,7 @@ int raw_sock = -1;
 bool is_promiscuous;
 
 char *flags[] = {
-    "--list-interfaces", "--interface", "--promiscuous", "--filter", "--x", "--ascii"
+    "--list-interfaces", "--interface", "--promiscuous", "--filter", "--x", "--ascii", "--verbose"
 };
 
 int _change_promiscuous_mode(char * const ifname, bool mode);
@@ -223,7 +223,7 @@ int _change_promiscuous_mode(char * const ifname, bool mode)
     return 0;
 }
 
-void print_packet_details(unsigned char * const buffer, ssize_t length, bool hex, bool ascii)
+void print_packet_details(unsigned char * const buffer, ssize_t length, bool hex, bool ascii, bool verbose)
 {
     if(length < (ssize_t)sizeof(struct ethhdr))
         return;
@@ -243,22 +243,30 @@ void print_packet_details(unsigned char * const buffer, ssize_t length, bool hex
             return;
 
         struct iphdr *ip = (struct iphdr *)(buffer + sizeof(struct ethhdr));
-        struct in_addr src, dst;
 
-        src.s_addr = ip->saddr;
-        dst.s_addr = ip->daddr;
+        char src_ip[INET_ADDRSTRLEN];
+        char dst_ip[INET_ADDRSTRLEN];
+
+        inet_ntop(AF_INET, &(ip->saddr), src_ip, INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, &(ip->daddr), dst_ip, INET_ADDRSTRLEN);
 
         int ip_header_len = ip->ihl * 4;
-        printf("IPv4: %s -> %s | Protocol: %u | TTL: %u\n",
-               inet_ntoa(src), inet_ntoa(dst), ip->protocol, ip->ttl);
+
+        fprintf(stdout, "IPv4: %s -> %s | Protocol: %u | TTL: %u",
+               src_ip, dst_ip, ip->protocol, ip->ttl);
+
+        if(verbose)
+            fprintf(stdout, " | iphdr len: %d", ip_header_len);
         
-        unsigned char * const l3_payload = buffer + sizeof(struct ethhdr) + sizeof(ip_header_len);
+        fprintf(stdout, "\n");
+        
+        unsigned char * const l3_payload = buffer + sizeof(struct ethhdr) + ip_header_len;
 
         if(ip->protocol == IPPROTO_TCP)
         {
             struct tcphdr *tcp = (struct tcphdr *)l3_payload;
-            printf("Layer 4 [TCP]: Port %u -> %u | Seq: %u\n",
-                   ntohs(tcp->source), ntohs(tcp->dest), ntohl(tcp->seq));
+            printf("Layer 4 [TCP]: Port %u -> %u | Seq: %u | Ack: %u\n",
+                   ntohs(tcp->source), ntohs(tcp->dest), ntohl(tcp->seq), ntohl(tcp->ack_seq));
         }
         else if(ip->protocol == IPPROTO_UDP)
         {
@@ -306,9 +314,10 @@ void print_packet_details(unsigned char * const buffer, ssize_t length, bool hex
     }
 }
 
-int _packet_socket_enable(char * const ifname, char * const filter, bool is_promiscuous, bool hex, bool ascii, int flag)
+int _packet_socket_enable(char * const ifname, char * const filter, bool is_promiscuous, int flag, bool hex, bool ascii, bool verbose)
 {
-    fprintf(stdout, "ifname: %s, filter: %s, is_promiscuous: %d, hex: %d, flag: %d\n", ifname, filter, is_promiscuous, hex, flag);
+    if(verbose)
+        fprintf(stdout, "ifname: %s, filter: %s, is_promiscuous: %d, hex: %d, flag: %d\n", ifname, filter, is_promiscuous, hex, flag);
 
     raw_sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
     if(raw_sock < 0)
@@ -316,6 +325,9 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
         perror("socket creation failed. Are you running with sudo?");
         return SOCK_FAILED;
     }
+
+    if(verbose)
+        fprintf(stdout, "raw_sock fd: %d\n", raw_sock);
 
     if(filter != NULL && strlen(filter))
     {
@@ -348,13 +360,16 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
         }
 
         // debugging purpose
-        for (int i = 0; i < linux_filter.len; ++i) {
-            printf("[%02d] 0x%04x 0x%02x 0x%02x 0x%08x\n",
-                i,
-                linux_filter.filter[i].code,
-                linux_filter.filter[i].jt,
-                linux_filter.filter[i].jf,
-                linux_filter.filter[i].k);
+        if(verbose)
+        {
+            for (int i = 0; i < linux_filter.len; ++i) {
+                printf("[%02d] 0x%04x 0x%02x 0x%02x 0x%08x\n",
+                    i,
+                    linux_filter.filter[i].code,
+                    linux_filter.filter[i].jt,
+                    linux_filter.filter[i].jf,
+                    linux_filter.filter[i].k);
+            }
         }
 
         pcap_freecode(&fp);
@@ -417,7 +432,8 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
             perror("[-] recvfrom");
             break;
         }
-        print_packet_details(buffer, num_bytes, hex, ascii);
+
+        print_packet_details(buffer, num_bytes, hex, ascii, verbose);
     }
 
     if(is_promiscuous)

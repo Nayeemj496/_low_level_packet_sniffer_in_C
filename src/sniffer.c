@@ -4,7 +4,6 @@
 #include <stdlib.h> 
 #include <sock_essentials.h>
 
-
 int main(int argc, char **argv)
 {
     signal(SIGINT, handle_sigint);
@@ -75,7 +74,7 @@ int main(int argc, char **argv)
             bool hex = (hex_flag_index > 0) ? true : false;
             bool ascii = (ascii_flag_index > 0) && hex ? true : false;
             bool verbose = (verbose_flag_index > 0) ? true : false;
-            char *const filter = (filter_flag_index > 0) ? argv[filter_flag_index + 1] : NULL;
+            char * const filter = (filter_flag_index > 0) ? argv[filter_flag_index + 1] : NULL;
 
             _packet_socket_enable(ifname, filter, is_promiscuous, flag, hex, ascii, verbose);
         }

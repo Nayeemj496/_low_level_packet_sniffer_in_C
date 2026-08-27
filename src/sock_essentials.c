@@ -5,8 +5,10 @@
 #include <stdlib.h>
 #include <stdbool.h>            
 #include <signal.h>             // signal()
+#include <poll.h>
 #include <sys/socket.h>         // socket(); struct sockaddr
 #include <sys/ioctl.h>          // ioctl()
+#include <sys/mman.h>
 #include <net/if.h>             // struct ifreq
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
@@ -19,10 +21,18 @@
 #include <pcap/pcap.h>
 #include <sock_essentials.h>
 
+#define BLOCK_SIZE   4096
+#define BLOCK_NUM    64
+#define FRAME_SIZE   2048
+#define FRAME_NUM    ((BLOCK_SIZE * BLOCK_NUM) / FRAME_SIZE)
+
 char **ARGV = NULL;
 char *ifname = NULL;
+uint8_t *ring = NULL;
 int ARGC = -1;
 int raw_sock = -1;
+int frames_captured = -1;
+size_t ring_size = -1;
 bool is_promiscuous;
 
 char *flags[] = {
@@ -36,14 +46,16 @@ void handle_sigint(int sig)
     printf("\n[!] Ctrl+C detected. Cleaning up and exiting...\n");
 
     if(is_promiscuous)
-    {
         _change_promiscuous_mode(ifname, false);
-    }
+
+    if(ring_size >= 0 && ring)
+        munmap(ring, ring_size);
 
     if(raw_sock >= 0)
-    {
         close(raw_sock);
-    }
+
+    if(frames_captured > 0)
+        fprintf(stdout, "%d frames have been captured!\n", frames_captured);
 
     exit(0);
 }
@@ -223,7 +235,7 @@ int _change_promiscuous_mode(char * const ifname, bool mode)
     return 0;
 }
 
-void print_packet_details(unsigned char * const buffer, ssize_t length, bool hex, bool ascii, bool verbose)
+void print_frame_details(unsigned char * const buffer, ssize_t length, bool hex, bool ascii, bool verbose)
 {
     if(length < (ssize_t)sizeof(struct ethhdr))
         return;
@@ -265,8 +277,8 @@ void print_packet_details(unsigned char * const buffer, ssize_t length, bool hex
         if(ip->protocol == IPPROTO_TCP)
         {
             struct tcphdr *tcp = (struct tcphdr *)l3_payload;
-            printf("Layer 4 [TCP]: Port %u -> %u | Seq: %u | Ack: %u\n",
-                   ntohs(tcp->source), ntohs(tcp->dest), ntohl(tcp->seq), ntohl(tcp->ack_seq));
+            printf("Layer 4 [TCP]: Port %u -> %u | Seq: %u | Ack: %u | tcphdr len: %d\n",
+                   ntohs(tcp->source), ntohs(tcp->dest), ntohl(tcp->seq), ntohl(tcp->ack_seq), tcp->doff * 4);
         }
         else if(ip->protocol == IPPROTO_UDP)
         {
@@ -319,11 +331,41 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
     if(verbose)
         fprintf(stdout, "ifname: %s, filter: %s, is_promiscuous: %d, hex: %d, flag: %d\n", ifname, filter, is_promiscuous, hex, flag);
 
-    raw_sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    raw_sock = socket(AF_PACKET, SOCK_RAW, 0);
     if(raw_sock < 0)
     {
         perror("socket creation failed. Are you running with sudo?");
         return SOCK_FAILED;
+    }
+
+    // Set TPACKET version to V2
+    int version = TPACKET_V2;
+    if (setsockopt(raw_sock, SOL_PACKET, PACKET_VERSION, &version, sizeof(version)) == -1) {
+        perror("[-] setsockopt PACKET_VERSION");
+        close(raw_sock);
+        return 1;
+    }
+
+    // Configure ring buffer dimensions
+    struct tpacket_req req = {
+        .tp_block_size = BLOCK_SIZE,
+        .tp_block_nr   = BLOCK_NUM,
+        .tp_frame_size = FRAME_SIZE,
+        .tp_frame_nr   = FRAME_NUM
+    };
+    if (setsockopt(raw_sock, SOL_PACKET, PACKET_RX_RING, &req, sizeof(req)) == -1) {
+        perror("[-] setsockopt PACKET_RX_RING");
+        close(raw_sock);
+        return 1;
+    }
+
+    // Map kernel ring buffer into user-space
+    ring_size = (size_t)req.tp_block_size * req.tp_block_nr;
+    ring = mmap(NULL, ring_size, PROT_READ | PROT_WRITE, MAP_SHARED, raw_sock, 0);
+    if (ring == MAP_FAILED) {
+        perror("[-] mmap");
+        close(raw_sock);
+        return 1;
     }
 
     if(verbose)
@@ -332,10 +374,13 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
     if(filter != NULL && strlen(filter))
     {
         struct bpf_program fp;
+
         pcap_t *dead_handle = pcap_open_dead(DLT_EN10MB, MAXIMUM_SNAPLEN);
         if(!dead_handle)
         {
             fprintf(stderr, "[-] Failed to initialize dead pcap handle\n");
+            munmap(ring, ring_size);
+            close(raw_sock);
             return 1;
         }
 
@@ -343,6 +388,8 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
         {
             fprintf(stderr, "[-] Filter compilation error: %s\n", pcap_geterr(dead_handle));
             pcap_close(dead_handle);
+            munmap(ring, ring_size);
+            close(raw_sock);
             return 1;
         }
 
@@ -353,6 +400,7 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
 
         if (setsockopt(raw_sock, SOL_SOCKET, SO_ATTACH_FILTER, &linux_filter, sizeof(linux_filter)) == -1) {
             perror("[-] setsockopt");
+            munmap(ring, ring_size);
             close(raw_sock);
             pcap_freecode(&fp);
             pcap_close(dead_handle);
@@ -378,37 +426,46 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
         fprintf(stdout, "[+] Successfully compiled and attached filter: \"%s\"\n", filter);
     }
 
+    unsigned int ifindex = -1;
+
     if(flag != ALL_IF)
     {
         // packet will run on "ifname" interface
-        unsigned int ifindex = if_nametoindex(ifname);
+        ifindex = if_nametoindex(ifname);
         if (ifindex == 0) {
             perror("[-] Failed to find interface index");
+            munmap(ring, ring_size);
             close(raw_sock);
             return 1;
         }
-
-        struct sockaddr_ll sll;
-        memset(&sll, 0, sizeof(sll));
-        sll.sll_family   = AF_PACKET;
-        sll.sll_protocol = htons(ETH_P_ALL); // Capture all protocols on this interface
-        sll.sll_ifindex  = ifindex;          // Bind strictly to this interface index
-
-        // Bind the socket
-        if (bind(raw_sock, (struct sockaddr *)&sll, sizeof(sll)) == -1) {
-            perror("[-] Failed to bind socket to interface");
-            close(raw_sock);
-            return 1;
-        }
-
-        printf("[+] Socket successfully bound to interface %s (index: %u)\n", ifname, ifindex);
     }
+
+    struct sockaddr_ll sll;
+    memset(&sll, 0, sizeof(sll));
+    sll.sll_family   = AF_PACKET;
+    sll.sll_protocol = htons(ETH_P_ALL);                    // Capture all protocols on this interface
+    sll.sll_ifindex  = (ifindex > 0) ? ifindex : 0;         // Bind strictly to this interface index
+
+    // Bind the socket
+    if (bind(raw_sock, (struct sockaddr *)&sll, sizeof(sll)) == -1) {
+        perror("[-] Failed to bind socket to interface");
+        munmap(ring, ring_size);
+        close(raw_sock);
+        return 1;
+    }
+
+    if(ifindex > 0)
+        fprintf(stdout, "[+] Socket successfully bound to interface %s (index: %u)\n", ifname, ifindex);
 
     if(is_promiscuous)
     {
         // enable promiscuous mode
         if(_change_promiscuous_mode(ifname, true) < 0)
-            return -1;
+        {
+            munmap(ring, ring_size);
+            close(raw_sock);
+            return 1;
+        }
     }
     
     printf("[+] Sniffer started on interface %s", ifname);
@@ -420,28 +477,46 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
 
     printf("[+] Waiting for packets... (Press Ctrl+C to stop)\n");
 
-    unsigned char buffer[BUFFER_SIZE];
-    struct sockaddr_ll from;
-    socklen_t from_len = sizeof(from);
+    struct pollfd pfd = {
+        .fd = raw_sock,
+        .events = POLLIN | POLLERR
+    };
+
+    unsigned int frame_idx = 0;
+    frames_captured = 0;
 
     while(true)
     {
-        ssize_t num_bytes = recvfrom(raw_sock, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&from, &from_len);
-        if(num_bytes < 0)
-        {
-            perror("[-] recvfrom");
-            break;
+        // Point to the frame header in the ring buffer
+        struct tpacket2_hdr *header = (struct tpacket2_hdr *)(ring + (frame_idx * FRAME_SIZE));
+
+        // If slot belongs to kernel, wait for incoming packets using poll()
+        if ((header->tp_status & TP_STATUS_USER) == 0) {
+            poll(&pfd, 1, -1);
+            continue;
         }
 
-        print_packet_details(buffer, num_bytes, hex, ascii, verbose);
+        // Pointer to raw frame data inside frame slot
+        unsigned char *frame_data = (unsigned char *)header + header->tp_mac;
+        print_frame_details(frame_data, header->tp_len, hex, ascii, verbose);
+
+        // Release frame slot back to the kernel
+        header->tp_status = TP_STATUS_KERNEL;
+        frame_idx = (frame_idx + 1) % FRAME_NUM;
+        frames_captured++;
     }
 
     if(is_promiscuous)
     {
         if(_change_promiscuous_mode(ifname, false) < 0)
-            return -1;
+        {
+            munmap(ring, ring_size);
+            close(raw_sock);
+            return 1;
+        }
     }
 
+    munmap(ring, ring_size);
     close(raw_sock);
 
     return 0;

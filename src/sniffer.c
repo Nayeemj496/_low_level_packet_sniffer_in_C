@@ -59,12 +59,12 @@ int main(int argc, char **argv)
 
         if(flag == IF_NONEXISTENT)
         {
-            fprintf(stderr, "[-] \"%s\" is administratively down\n", argv[interface_flag_index + 1]);
+            fprintf(stderr, "[-] \"%s\" interface has not been found!\n", argv[interface_flag_index + 1]);
             return 7;
         }
         else if(flag == ADMIN_DOWN)
         {
-            fprintf(stderr, "[-] \"%s\" interface has not been found\n", argv[interface_flag_index + 1]);
+            fprintf(stderr, "[-] \"%s\" is administratively down\n", argv[interface_flag_index + 1]);
             return 8;
         }
         else

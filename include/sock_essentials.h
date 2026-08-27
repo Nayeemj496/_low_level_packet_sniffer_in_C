@@ -11,7 +11,7 @@
 #define IF_NONEXISTENT      2
 #define ALL_IF              3
 #define SOCK_FAILED         4
-#define BUFFER_SIZE         65536
+#define BUFFER_SIZE         262144
 #define MAXIMUM_SNAPLEN     262144
 
 extern char *flags[];

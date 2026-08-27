@@ -11,5 +11,6 @@ RUN apt-get update -y && \
     tcpdump \
     curl \
     netcat-openbsd \
+    nmap \
     tmux && \
     rm -rf /var/lib/apt/lists/*

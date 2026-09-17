@@ -54,6 +54,7 @@ int main(int argc, char **argv)
         int hex_flag_index = _arg_present("--x");
         int ascii_flag_index = _arg_present("--ascii");
         int verbose_flag_index = _arg_present("--verbose");
+        int capture_flag_index = _arg_present("--capture");
 
         int flag = _check_interface_available(argv[interface_flag_index + 1]);
 
@@ -75,8 +76,9 @@ int main(int argc, char **argv)
             bool ascii = (ascii_flag_index > 0) && hex ? true : false;
             bool verbose = (verbose_flag_index > 0) ? true : false;
             char * const filter = (filter_flag_index > 0) ? argv[filter_flag_index + 1] : NULL;
+            bool capture = (capture_flag_index > 0) ? true : false;
 
-            _packet_socket_enable(ifname, filter, is_promiscuous, flag, hex, ascii, verbose);
+            _packet_socket_enable(ifname, filter, is_promiscuous, flag, hex, ascii, verbose, capture);
         }
     }
 

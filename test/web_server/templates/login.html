@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SYSTEM LOGIN</title>
+    <style>
+        body { background-color: #0d1117; color: #00ff00; font-family: 'Courier New', Courier, monospace; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .login-box { border: 2px solid #00ff00; padding: 40px; box-shadow: 0 0 15px #00ff00; width: 300px; text-align: center;}
+        input[type="text"], input[type="password"] { width: 90%; padding: 10px; margin: 10px 0; background: #000; color: #00ff00; border: 1px solid #00ff00; outline: none; }
+        input[type="text"]:focus, input[type="password"]:focus { box-shadow: 0 0 8px #00ff00; }
+        input[type="submit"] { background: #00ff00; color: #000; border: none; padding: 10px 20px; cursor: pointer; font-weight: bold; text-transform: uppercase; margin-top: 15px; width: 100%; transition: 0.2s;}
+        input[type="submit"]:hover { background: #fff; box-shadow: 0 0 10px #fff; }
+        h2 { text-shadow: 0 0 5px #00ff00; letter-spacing: 2px; }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <h2>SECURE PORTAL</h2>
+        <!-- The form submits via POST, which your sniffer will look for -->
+        <form action="/login" method="POST">
+            <input type="text" name="username" placeholder="USERNAME" required><br>
+            <input type="password" name="password" placeholder="PASSWORD" required><br>
+            <input type="submit" value="Authenticate">
+        </form>
+    </div>
+</body>
+</html>

@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <signal.h>
 
-#define N_FLAG              7
+#define N_FLAG              8
 #define ADMIN_UP            0
 #define ADMIN_DOWN          1
 #define IF_NONEXISTENT      2
@@ -14,7 +14,6 @@
 #define BUFFER_SIZE         262144
 #define MAXIMUM_SNAPLEN     262144
 
-extern char *flags[];
 extern char **ARGV;
 extern char *ifname;
 extern int ARGC;
@@ -25,7 +24,6 @@ void handle_sigint(int);
 bool _flag_present(char * const);
 int _arg_present(char * const);
 int _list_interfaces(void);
-int _check_interface_available(char * const);
-int _packet_socket_enable(char * const, char * const, bool, int, bool, bool, bool);
+int _check_interface_available(char * const);int _packet_socket_enable(char * const, char * const, bool, int, bool, bool, bool, bool);
 
 #endif

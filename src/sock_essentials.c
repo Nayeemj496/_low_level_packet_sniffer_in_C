@@ -1,9 +1,11 @@
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
+#include <color.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdbool.h>            
+#include <ctype.h>
 #include <signal.h>             // signal()
 #include <poll.h>
 #include <sys/socket.h>         // socket(); struct sockaddr
@@ -36,10 +38,166 @@ size_t ring_size = -1;
 bool is_promiscuous;
 
 char *flags[] = {
-    "--list-interfaces", "--interface", "--promiscuous", "--filter", "--x", "--ascii", "--verbose"
+    "--list-interfaces", "--interface", "--promiscuous", "--filter", "--x", "--ascii", "--verbose", "--capture"
 };
 
 int _change_promiscuous_mode(char * const ifname, bool mode);
+
+static bool _contains_case_insensitive(const unsigned char *text, size_t length,
+                                       const char *needle)
+{
+    size_t needle_length = strlen(needle);
+
+    if(needle_length == 0 || needle_length > length)
+        return false;
+
+    for(size_t offset = 0; offset <= length - needle_length; ++offset)
+    {
+        size_t i = 0;
+
+        for(; i < needle_length; ++i)
+        {
+            if(tolower((unsigned char)text[offset + i]) !=
+               tolower((unsigned char)needle[i]))
+                break;
+        }
+
+        if(i == needle_length)
+            return true;
+    }
+
+    return false;
+}
+
+static void _print_payload_line(const char *label, const unsigned char *line,
+                                size_t length)
+{
+    printf(COLOR_BOLD BRIGHT_BLUE "\n[!] %s: " COLOR_RESET, label);
+
+    for(size_t i = 0; i < length; ++i)
+    {
+        unsigned char character = line[i];
+        printf(COLOR_BOLD BRIGHT_RED "%c" COLOR_RESET, isprint(character) ? character : '.');
+    }
+
+    printf("\n\n");
+}
+
+static bool _inspect_http_payload(const unsigned char *payload, size_t length)
+{
+    const unsigned char *body = NULL;
+    size_t body_length = 0;
+
+    if(_contains_case_insensitive(payload, length, "Authorization: Basic ") ||
+       _contains_case_insensitive(payload, length, "X-Password:") ||
+       _contains_case_insensitive(payload, length, "X-Auth-Password:") ||
+       _contains_case_insensitive(payload, length, "Password:"))
+       {
+        _print_payload_line("Cleartext HTTP credentials", payload, length);
+        return true;
+       }
+
+    for(size_t i = 0; i + 3 < length; ++i)
+    {
+        if(payload[i] == '\r' && payload[i + 1] == '\n' &&
+           payload[i + 2] == '\r' && payload[i + 3] == '\n')
+        {
+            body = payload + i + 4;
+            body_length = length - i - 4;
+            break;
+        }
+    }
+
+    if(body == NULL)
+        return false;
+
+    if(_contains_case_insensitive(body, body_length, "password=") ||
+       _contains_case_insensitive(body, body_length, "passwd=") ||
+       _contains_case_insensitive(body, body_length, "pass="))
+    {
+        _print_payload_line("Cleartext HTTP form credentials", body, body_length);
+        return true;
+    }
+}
+
+static bool _telnet_is_input_line(const unsigned char *line, size_t length)
+{
+    for(size_t i = 0; i < length; ++i)
+    {
+        if(isprint(line[i]) && !isspace(line[i]))
+            return true;
+    }
+
+    return false;
+}
+
+static bool _inspect_telnet_payload(const unsigned char *payload, size_t length)
+{
+    unsigned char line[BUFFER_SIZE];
+    size_t line_length = 0;
+    bool in_subnegotiation = false;
+
+    for(size_t i = 0; i < length; ++i)
+    {
+        if(payload[i] == 0xff)
+        {
+            if(i + 1 >= length)
+                continue;
+
+            if(payload[i + 1] == 0xff && !in_subnegotiation)
+            {
+                if(line_length < sizeof(line) - 1)
+                    line[line_length++] = payload[++i];
+                continue;
+            }
+
+            if(payload[i + 1] == 0xfa)
+                in_subnegotiation = true;
+            else if(payload[i + 1] == 0xf0)
+                in_subnegotiation = false;
+
+            ++i;
+            continue;
+        }
+
+        if(in_subnegotiation)
+            continue;
+
+        if(payload[i] == '\r' || payload[i] == '\n')
+        {
+            if(_telnet_is_input_line(line, line_length))
+                _print_payload_line("Cleartext Telnet input", line, line_length);
+
+            line_length = 0;
+            continue;
+        }
+
+        if(line_length < sizeof(line) - 1)
+            line[line_length++] = payload[i];
+    }
+
+    if(_telnet_is_input_line(line, line_length))
+        _print_payload_line("Cleartext Telnet input", line, line_length);
+}
+
+static bool _inspect_tcp_payload(const unsigned char *payload, size_t length,
+                                 uint16_t source_port, uint16_t destination_port)
+{
+    bool is_http = source_port == 80 || destination_port == 80 ||
+                   source_port == 8080 || destination_port == 8080 ||
+                   source_port == 8000 || destination_port == 8000;
+    bool is_telnet = source_port == 23 || destination_port == 23 ||
+                     source_port == 2323 || destination_port == 2323;
+
+    if(length == 0)
+        return false;
+
+    if(is_http)
+        return _inspect_http_payload(payload, length);
+
+    if(is_telnet)
+        return _inspect_telnet_payload(payload, length);
+}
 
 void handle_sigint(int sig)
 {
@@ -235,10 +393,12 @@ int _change_promiscuous_mode(char * const ifname, bool mode)
     return 0;
 }
 
-void print_frame_details(unsigned char * const buffer, ssize_t length, bool hex, bool ascii, bool verbose)
+bool print_frame_details(unsigned char * const buffer, ssize_t length, bool hex, bool ascii, bool verbose, bool capture)
 {
+    bool found = false;
+
     if(length < (ssize_t)sizeof(struct ethhdr))
-        return;
+        return false;
     
     struct ethhdr *eth = (struct ethhdr *)buffer;
     printf("\n=== [Frame: %zd bytes] ===\n", length);
@@ -252,7 +412,7 @@ void print_frame_details(unsigned char * const buffer, ssize_t length, bool hex,
     if(ntohs(eth->h_proto) == ETH_P_IP)
     {
         if(length < (ssize_t)(sizeof(struct ethhdr) + sizeof(struct iphdr)))
-            return;
+            return false;
 
         struct iphdr *ip = (struct iphdr *)(buffer + sizeof(struct ethhdr));
 
@@ -263,6 +423,10 @@ void print_frame_details(unsigned char * const buffer, ssize_t length, bool hex,
         inet_ntop(AF_INET, &(ip->daddr), dst_ip, INET_ADDRSTRLEN);
 
         int ip_header_len = ip->ihl * 4;
+        
+        if(ip_header_len < (int)sizeof(struct iphdr) ||
+           length < (ssize_t)(sizeof(struct ethhdr) + ip_header_len))
+            return false;
 
         fprintf(stdout, "IPv4: %s -> %s | Protocol: %u | TTL: %u",
                src_ip, dst_ip, ip->protocol, ip->ttl);
@@ -276,9 +440,27 @@ void print_frame_details(unsigned char * const buffer, ssize_t length, bool hex,
 
         if(ip->protocol == IPPROTO_TCP)
         {
+            size_t ip_payload_offset = sizeof(struct ethhdr) + ip_header_len;
+
+            if(length < (ssize_t)(ip_payload_offset + sizeof(struct tcphdr)))
+                return false;
+
             struct tcphdr *tcp = (struct tcphdr *)l3_payload;
             printf("Layer 4 [TCP]: Port %u -> %u | Seq: %u | Ack: %u | tcphdr len: %d\n",
                    ntohs(tcp->source), ntohs(tcp->dest), ntohl(tcp->seq), ntohl(tcp->ack_seq), tcp->doff * 4);
+            
+            size_t tcp_header_len = (size_t)tcp->doff * 4;
+            if(tcp_header_len < sizeof(struct tcphdr) ||
+               length < (ssize_t)(ip_payload_offset + tcp_header_len))
+                return false;
+
+            if(capture)
+            {
+                if(_inspect_tcp_payload(buffer + ip_payload_offset + tcp_header_len,
+                                 length - ip_payload_offset - tcp_header_len,
+                                 ntohs(tcp->source), ntohs(tcp->dest)))
+                   found = true;
+            }            
         }
         else if(ip->protocol == IPPROTO_UDP)
         {
@@ -296,11 +478,17 @@ void print_frame_details(unsigned char * const buffer, ssize_t length, bool hex,
             for(int j = 0; j < 8; ++j)
             {
                 if(i * 16 + 2 * j < length)
-                    printf("%02x", buffer[i * 16 + 2 * j]);
+                    if(buffer[i * 16 + 2 * j] > 0x1F && buffer[i * 16 + 2 * j] < 0x7f)
+                        printf(COLOR_BOLD COLOR_GREEN "%02x" COLOR_RESET, buffer[i * 16 + 2 * j]);
+                    else
+                        printf(COLOR_BOLD COLOR_YELLOW "%02x" COLOR_RESET, buffer[i * 16 + 2 * j]);
                 else
                     printf("  ");
                 if(i * 16 + 2 * j + 1 < length)
-                    printf("%02x ", buffer[i * 16 + 2 * j + 1]);
+                    if(buffer[i * 16 + 2 * j + 1] > 0x1F && buffer[i * 16 + 2 * j + 1] < 0x7f)
+                        printf(COLOR_BOLD COLOR_GREEN "%02x " COLOR_RESET, buffer[i * 16 + 2 * j + 1]);
+                    else
+                        printf(COLOR_BOLD COLOR_YELLOW "%02x " COLOR_RESET, buffer[i * 16 + 2 * j + 1]);
                 else
                     printf("   ");
             }
@@ -314,9 +502,9 @@ void print_frame_details(unsigned char * const buffer, ssize_t length, bool hex,
                     if(i * 16 + j < length)
                     {
                         if(buffer[i * 16 + j] > 0x1F && buffer[i * 16 + j] < 0x7F)
-                            printf("%c", buffer[i * 16 + j]);
+                            printf(COLOR_BOLD COLOR_GREEN "%c" COLOR_RESET, buffer[i * 16 + j]);
                         else
-                            printf(".");
+                            printf(COLOR_BOLD COLOR_YELLOW "." COLOR_RESET);
                     }
                 }
             }
@@ -324,9 +512,11 @@ void print_frame_details(unsigned char * const buffer, ssize_t length, bool hex,
             printf("\n");
         }
     }
+
+    return found;
 }
 
-int _packet_socket_enable(char * const ifname, char * const filter, bool is_promiscuous, int flag, bool hex, bool ascii, bool verbose)
+int _packet_socket_enable(char * const ifname, char * const filter, bool is_promiscuous, int flag, bool hex, bool ascii, bool verbose, bool capture)
 {
     if(verbose)
         fprintf(stdout, "ifname: %s, filter: %s, is_promiscuous: %d, hex: %d, flag: %d\n", ifname, filter, is_promiscuous, hex, flag);
@@ -498,7 +688,7 @@ int _packet_socket_enable(char * const ifname, char * const filter, bool is_prom
 
         // Pointer to raw frame data inside frame slot
         unsigned char *frame_data = (unsigned char *)header + header->tp_mac;
-        print_frame_details(frame_data, header->tp_len, hex, ascii, verbose);
+        print_frame_details(frame_data, header->tp_len, hex, ascii, verbose, capture);
 
         // Release frame slot back to the kernel
         header->tp_status = TP_STATUS_KERNEL;

@@ -92,10 +92,10 @@ static bool _inspect_http_payload(const unsigned char *payload, size_t length)
        _contains_case_insensitive(payload, length, "X-Password:") ||
        _contains_case_insensitive(payload, length, "X-Auth-Password:") ||
        _contains_case_insensitive(payload, length, "Password:"))
-       {
+    {
         _print_payload_line("Cleartext HTTP credentials", payload, length);
         return true;
-       }
+    }
 
     for(size_t i = 0; i + 3 < length; ++i)
     {
@@ -118,70 +118,226 @@ static bool _inspect_http_payload(const unsigned char *payload, size_t length)
         _print_payload_line("Cleartext HTTP form credentials", body, body_length);
         return true;
     }
-}
-
-static bool _telnet_is_input_line(const unsigned char *line, size_t length)
-{
-    for(size_t i = 0; i < length; ++i)
-    {
-        if(isprint(line[i]) && !isspace(line[i]))
-            return true;
-    }
 
     return false;
 }
 
-static bool _inspect_telnet_payload(const unsigned char *payload, size_t length)
+enum telnet_expected_input {
+    TELNET_INPUT_NONE,
+    TELNET_INPUT_USERNAME,
+    TELNET_INPUT_PASSWORD
+};
+
+struct telnet_stream {
+    bool used;
+    uint32_t client_ip;
+    uint32_t server_ip;
+    uint16_t client_port;
+    uint16_t server_port;
+    enum telnet_expected_input expected_input;
+    bool client_iac_pending;
+    bool client_in_subnegotiation;
+    bool server_iac_pending;
+    bool server_in_subnegotiation;
+    unsigned char client_line[BUFFER_SIZE];
+    size_t client_line_length;
+    unsigned char server_line[BUFFER_SIZE];
+    size_t server_line_length;
+};
+
+#define MAX_TELNET_STREAMS 64
+static struct telnet_stream telnet_streams[MAX_TELNET_STREAMS];
+
+static struct telnet_stream *_telnet_stream(uint32_t client_ip, uint16_t client_port,
+                                            uint32_t server_ip, uint16_t server_port)
 {
-    unsigned char line[BUFFER_SIZE];
-    size_t line_length = 0;
-    bool in_subnegotiation = false;
+    struct telnet_stream *free_stream = NULL;
+
+    for(size_t i = 0; i < MAX_TELNET_STREAMS; ++i)
+    {
+        if(telnet_streams[i].used &&
+           telnet_streams[i].client_ip == client_ip &&
+           telnet_streams[i].client_port == client_port &&
+           telnet_streams[i].server_ip == server_ip &&
+           telnet_streams[i].server_port == server_port)
+            return &telnet_streams[i];
+
+        if(!telnet_streams[i].used && free_stream == NULL)
+            free_stream = &telnet_streams[i];
+    }
+
+    if(free_stream == NULL)
+        free_stream = &telnet_streams[0];
+
+    memset(free_stream, 0, sizeof(*free_stream));
+    free_stream->used = true;
+    free_stream->client_ip = client_ip;
+    free_stream->client_port = client_port;
+    free_stream->server_ip = server_ip;
+    free_stream->server_port = server_port;
+    return free_stream;
+}
+
+static void _trim_telnet_line(unsigned char *line, size_t *length)
+{
+    while(*length > 0 && isspace(line[*length - 1]))
+        --(*length);
+    line[*length] = '\0';
+}
+
+static bool _telnet_shell_prompt(const unsigned char *line, size_t length)
+{
+    if(length == 0)
+        return false;
+
+    return line[length - 1] == '$' || line[length - 1] == '#';
+}
+
+static bool _telnet_emit_client_line(struct telnet_stream *stream)
+{
+    _trim_telnet_line(stream->client_line, &stream->client_line_length);
+    if(stream->client_line_length == 0)
+        return false;
+
+    if(stream->expected_input == TELNET_INPUT_USERNAME)
+    {
+        _print_payload_line("Telnet cleartext username", stream->client_line,
+                            stream->client_line_length);
+    }
+    else if(stream->expected_input == TELNET_INPUT_PASSWORD)
+    {
+        _print_payload_line("Telnet cleartext password", stream->client_line,
+                            stream->client_line_length);
+    }
+    else
+        _print_payload_line("Telnet command", stream->client_line,
+                            stream->client_line_length);
+
+    stream->expected_input = TELNET_INPUT_NONE;
+    stream->client_line_length = 0;
+    return true;
+}
+
+static bool _telnet_process_server_line(struct telnet_stream *stream)
+{
+    bool prompt_found = false;
+
+    _trim_telnet_line(stream->server_line, &stream->server_line_length);
+    if(stream->server_line_length == 0)
+        return false;
+
+    if(_contains_case_insensitive(stream->server_line, stream->server_line_length, "login:") ||
+       _contains_case_insensitive(stream->server_line, stream->server_line_length, "username:"))
+    {
+        stream->expected_input = TELNET_INPUT_USERNAME;
+        prompt_found = true;
+    }
+    else if(_contains_case_insensitive(stream->server_line, stream->server_line_length, "password:"))
+    {
+        stream->expected_input = TELNET_INPUT_PASSWORD;
+        prompt_found = true;
+    }
+    else if(_telnet_shell_prompt(stream->server_line, stream->server_line_length) ||
+            _contains_case_insensitive(stream->server_line, stream->server_line_length, "welcome"))
+    {
+        stream->expected_input = TELNET_INPUT_NONE;
+        prompt_found = true;
+    }
+
+    if(prompt_found)
+        _print_payload_line("Telnet prompt", stream->server_line,
+                            stream->server_line_length);
+
+    stream->server_line_length = 0;
+    return false;
+}
+
+static bool _telnet_server_prompt_ready(const struct telnet_stream *stream)
+{
+    return _contains_case_insensitive(stream->server_line, stream->server_line_length, "login:") ||
+           _contains_case_insensitive(stream->server_line, stream->server_line_length, "username:") ||
+           _contains_case_insensitive(stream->server_line, stream->server_line_length, "password:") ||
+           (stream->server_line_length > 0 &&
+            (stream->server_line[stream->server_line_length - 1] == '$' ||
+             stream->server_line[stream->server_line_length - 1] == '#'));
+}
+
+bool inspect_telnet_payload(const unsigned char *payload, size_t length,
+                            uint32_t source_ip, uint16_t source_port,
+                            uint32_t destination_ip, uint16_t destination_port)
+{
+    bool source_is_server = source_port == 23 || source_port == 2323;
+    bool destination_is_server = destination_port == 23 || destination_port == 2323;
+
+    if(!source_is_server && !destination_is_server)
+        return false;
+
+    uint32_t client_ip = source_is_server ? destination_ip : source_ip;
+    uint16_t client_port = source_is_server ? destination_port : source_port;
+    uint32_t server_ip = source_is_server ? source_ip : destination_ip;
+    uint16_t server_port = source_is_server ? source_port : destination_port;
+    struct telnet_stream *stream = _telnet_stream(client_ip, client_port,
+                                                  server_ip, server_port);
+    bool found = false;
+    bool *iac_pending = source_is_server ? &stream->server_iac_pending
+                                        : &stream->client_iac_pending;
+    bool *in_subnegotiation = source_is_server ? &stream->server_in_subnegotiation
+                                               : &stream->client_in_subnegotiation;
+    unsigned char *line = source_is_server ? stream->server_line : stream->client_line;
+    size_t *line_length = source_is_server ? &stream->server_line_length
+                                           : &stream->client_line_length;
 
     for(size_t i = 0; i < length; ++i)
     {
-        if(payload[i] == 0xff)
+        unsigned char character = payload[i];
+
+        if(*iac_pending)
         {
-            if(i + 1 >= length)
-                continue;
-
-            if(payload[i + 1] == 0xff && !in_subnegotiation)
-            {
-                if(line_length < sizeof(line) - 1)
-                    line[line_length++] = payload[++i];
-                continue;
-            }
-
-            if(payload[i + 1] == 0xfa)
-                in_subnegotiation = true;
-            else if(payload[i + 1] == 0xf0)
-                in_subnegotiation = false;
-
-            ++i;
+            *iac_pending = false;
+            if(character == 0xfa)
+                *in_subnegotiation = true;
+            else if(character == 0xf0)
+                *in_subnegotiation = false;
             continue;
         }
 
-        if(in_subnegotiation)
-            continue;
-
-        if(payload[i] == '\r' || payload[i] == '\n')
+        if(character == 0xff)
         {
-            if(_telnet_is_input_line(line, line_length))
-                _print_payload_line("Cleartext Telnet input", line, line_length);
-
-            line_length = 0;
+            *iac_pending = true;
             continue;
         }
 
-        if(line_length < sizeof(line) - 1)
-            line[line_length++] = payload[i];
+        if(*in_subnegotiation)
+            continue;
+
+        if(character == '\r' || character == '\n')
+        {
+            if(source_is_server)
+                _telnet_process_server_line(stream);
+            else
+                found = _telnet_emit_client_line(stream) || found;
+        }
+        else if(!source_is_server && (character == 0x08 || character == 0x7f))
+        {
+            if(*line_length > 0)
+                --(*line_length);
+        }
+        else if((isprint(character) || character == ' ' || character == '\t') &&
+                *line_length < BUFFER_SIZE - 1)
+        {
+            line[(*line_length)++] = character;
+        }
     }
 
-    if(_telnet_is_input_line(line, line_length))
-        _print_payload_line("Cleartext Telnet input", line, line_length);
+    if(source_is_server && _telnet_server_prompt_ready(stream))
+        _telnet_process_server_line(stream);
+
+    return found;
 }
 
 static bool _inspect_tcp_payload(const unsigned char *payload, size_t length,
-                                 uint16_t source_port, uint16_t destination_port)
+                                 uint32_t source_ip, uint16_t source_port,
+                                 uint32_t destination_ip, uint16_t destination_port)
 {
     bool is_http = source_port == 80 || destination_port == 80 ||
                    source_port == 8080 || destination_port == 8080 ||
@@ -196,7 +352,10 @@ static bool _inspect_tcp_payload(const unsigned char *payload, size_t length,
         return _inspect_http_payload(payload, length);
 
     if(is_telnet)
-        return _inspect_telnet_payload(payload, length);
+        return inspect_telnet_payload(payload, length, source_ip, source_port,
+                          destination_ip, destination_port);
+
+    return false;
 }
 
 void handle_sigint(int sig)
@@ -458,7 +617,8 @@ bool print_frame_details(unsigned char * const buffer, ssize_t length, bool hex,
             {
                 if(_inspect_tcp_payload(buffer + ip_payload_offset + tcp_header_len,
                                  length - ip_payload_offset - tcp_header_len,
-                                 ntohs(tcp->source), ntohs(tcp->dest)))
+                                 ip->saddr, ntohs(tcp->source),
+                                 ip->daddr, ntohs(tcp->dest)))
                    found = true;
             }            
         }

@@ -24,6 +24,7 @@ void handle_sigint(int);
 bool _flag_present(char * const);
 int _arg_present(char * const);
 int _list_interfaces(void);
-int _check_interface_available(char * const);int _packet_socket_enable(char * const, char * const, bool, int, bool, bool, bool, bool);
+int _check_interface_available(char * const);
+int _packet_socket_enable(char * const, char * const, bool, int, bool, bool, bool, bool);
 
 #endif

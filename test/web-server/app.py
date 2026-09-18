@@ -1,10 +1,13 @@
-from flask import Flask, render_template, request
+from flask import Flask, jsonify, render_template, request
 
 app = Flask(__name__)
 
-# Hardcoded credentials for testing the packet sniffer
 VALID_USER = "admin"
 VALID_PASS = "supersecret"
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "healthy"}), 200
 
 @app.route('/')
 def login_page():
@@ -12,7 +15,6 @@ def login_page():
 
 @app.route('/login', methods=['POST'])
 def login():
-    # Extracting cleartext data from the POST request
     username = request.form.get('username')
     password = request.form.get('password')
 
@@ -22,5 +24,4 @@ def login():
         return render_template('error.html')
 
 if __name__ == '__main__':
-    # host='0.0.0.0' allows external connections across your virtual network
     app.run(host='0.0.0.0', port=8080, debug=True)

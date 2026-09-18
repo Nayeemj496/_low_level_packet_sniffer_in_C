@@ -1,25 +1,71 @@
 services:
-    ubuntu:
-        build:
-            context: .
-            dockerfile: Dockerfile
-            network: host
-        container_name: ubuntu_
-        command: tail -f /dev/null
-        cap_add:
-            - SYS_ADMIN
-            - NET_ADMIN
-        networks:
-            - docker_net
-    flask:
-        build:
-            context: web_server
-            dockerfile: Dockerfile
-            network: host
-        container_name: web_server_
-        networks:
-            - docker_net
+
+  flask:
+    build:
+      context: web-server
+      dockerfile: Dockerfile
+      network: host
+    container_name: web_server
+    hostname: web_server
+    networks:
+      - docker_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  telnet-server:
+    build:
+      context: telnet-server
+      dockerfile: Dockerfile
+      network: host
+    container_name: telnet_server
+    hostname: telnet_server
+    cap_add:
+      - SYS_ADMIN
+      - AUDIT_WRITE
+      - SETUID
+      - SETGID
+    security_opt:
+      - apparmor:unconfined
+    devices:
+      - /dev/ptmx:/dev/ptmx
+    volumes:
+      - /dev/pts:/dev/pts
+    networks:
+      - docker_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash", "-c", "echo > /dev/tcp/127.0.0.1/23"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  client:
+    build:
+      context: client
+      network: host
+    container_name: client
+    hostname: client
+    depends_on:
+      telnet-server:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    ports:
+      - 3000:3000
+    security_opt:
+      - seccomp=unconfined
+    shm_size: "1Gb"
+    networks:
+      - docker_net
+    restart: unless-stopped
+
 networks:
-    docker_net:
-        driver: bridge
-        name: docker_net_
+  docker_net:
+    driver: bridge
+    name: docker_net

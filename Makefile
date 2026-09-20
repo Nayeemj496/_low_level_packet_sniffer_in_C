@@ -25,6 +25,6 @@ $(OBJDIR)/%.o: $(SRC)/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -I$(INCLUDE) -c $< -o $@
 
 clean:
-	rm -rf $(OBJDIR) $(TARGET)
+	rm -rf $(OBJDIR) $(TARGET) payload.log
 
 rebuild: clean all

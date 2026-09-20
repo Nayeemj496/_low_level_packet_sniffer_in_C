@@ -1,4 +1,18 @@
 services:
+  nginx:
+    build:
+      context: nginx
+      dockerfile: Dockerfile
+    container_name: nginx
+    hostname: nginx
+    depends_on:
+      flask:
+        condition: service_healthy
+    volumes:
+      - ./nginx/config:/etc/nginx/conf.d
+    networks:
+      - docker_net
+    restart: unless-stopped
 
   flask:
     build:
@@ -54,6 +68,8 @@ services:
     depends_on:
       telnet-server:
         condition: service_healthy
+      nginx:
+        condition: service_started
     stdin_open: true
     tty: true
     ports:

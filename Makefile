@@ -15,13 +15,16 @@ TARGET=sniffer
 
 all: $(TARGET)
 
+$(OBJDIR):
+	mkdir -p $@
+
 $(TARGET): $(OBJFILES)
 		$(CC) $(CFLAGS) $^ -o $@ $(LIBS)
 
-$(OBJDIR)/%.o: $(SRC)/%.c
+$(OBJDIR)/%.o: $(SRC)/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -I$(INCLUDE) -c $< -o $@
 
 clean:
-	rm -f $(OBJDIR)/*.o $(TARGET)
+	rm -rf $(OBJDIR) $(TARGET)
 
 rebuild: clean all

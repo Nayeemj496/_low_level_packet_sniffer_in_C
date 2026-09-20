@@ -72,15 +72,26 @@ static bool _contains_case_insensitive(const unsigned char *text, size_t length,
 static void _print_payload_line(const char *label, const unsigned char *line,
                                 size_t length)
 {
+    FILE *log_file = fopen("payload.log", "a");
+
     printf(COLOR_BOLD BRIGHT_BLUE "\n[!] %s: " COLOR_RESET, label);
+    if(log_file != NULL)
+        fprintf(log_file, "[!] %s: ", label);
 
     for(size_t i = 0; i < length; ++i)
     {
         unsigned char character = line[i];
         printf(COLOR_BOLD BRIGHT_RED "%c" COLOR_RESET, isprint(character) ? character : '.');
+        if(log_file != NULL)
+            fprintf(log_file, "%c", isprint(character) ? character : '.');
     }
 
     printf("\n\n");
+    if(log_file != NULL)
+    {
+        fprintf(log_file, "\n");
+        fclose(log_file);
+    }
 }
 
 static bool _inspect_http_payload(const unsigned char *payload, size_t length)

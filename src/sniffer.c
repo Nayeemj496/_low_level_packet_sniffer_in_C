@@ -11,7 +11,7 @@ int main(int argc, char **argv)
     if(argc < 2)
     {
         fprintf(stderr, "[-] Too few arguments!\n");
-        fprintf(stderr, "[-] Usage: sniff [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--x [--ascii]] [--verbose]] [--list-interfaces]\n");
+        fprintf(stderr, "[-] Usage: sniff [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--x [--ascii]] [--capture] [--verbose]] [--list-interfaces]\n");
         return 1;
     }
     
@@ -22,7 +22,7 @@ int main(int argc, char **argv)
             if(!_flag_present(argv[i]))
             {
                 fprintf(stderr, "[-] \"%s\" not a valid flag!\n", argv[i]);
-                fprintf(stderr, "[-] Try: [--list-interfaces] [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--x [--ascii]]] [--verbose]\n");
+                fprintf(stderr, "[-] Try: [--list-interfaces] [--interface <INTERFACE> [--promiscuous] [--filter <FILTER>] [--capture] [--x [--ascii]]] [--verbose]\n");
                 return 2;
             }
         }
@@ -44,7 +44,7 @@ int main(int argc, char **argv)
     }
     else if(interface_flag_index < 0)
     {
-        fprintf(stderr, "[-] Usage: sniff --interface <INTERFACE> [--filter <FILTER>] [--promiscuous] [--x [--ascii]] [--verbose]\n");
+        fprintf(stderr, "[-] Usage: sniff --interface <INTERFACE> [--filter <FILTER>] [--promiscuous] [--x [--ascii]] [--capture] [--verbose]\n");
         return 6;
     }
     else
